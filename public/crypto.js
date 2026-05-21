@@ -1,14 +1,24 @@
 /*
- * KripoCrypto — Web Crypto API uzerine kurulu hibrit sifreleme katmani.
+ * KripoCrypto — Web Crypto API uzerine kurulu uctan uca sifreleme katmani.
  *
- * Akis: her mesaj icin rastgele bir AES-GCM-256 anahtari uretilir, mesaj bu
- * anahtarla sifrelenir, ardindan AES anahtari aliciya ait RSA-OAEP-2048 acik
- * anahtariyla sifrelenir. Bu yontem hem hizli (AES) hem de guvenli anahtar
- * paylasimi (RSA) saglar; gercek hayattaki sistemler (PGP, S/MIME, Signal'in
- * eski versiyonlari) ayni mantigi kullanir.
+ * Algoritmalar
+ * ------------
+ *  - RSA-OAEP-2048 / SHA-256 : Anahtar paylasimi (AES anahtarini sarmak)
+ *  - RSA-PSS-2048   / SHA-256 : Mesaj imzalama (gondericiyi dogrulama)
+ *  - AES-GCM-256    / IV 96b  : Asil mesaj sifrelemesi (gizlilik + butunluk)
+ *  - PBKDF2 / SHA-256 / 310k  : Sifreden anahtar uretme (ozel anahtari sarmak)
+ *
+ * Akis (genel)
+ * ------------
+ *  Kayit aninda iki RSA cifti uretilir: biri sifreleme, biri imzalama. Her iki
+ *  ozel anahtar, kullanicinin sifresinden PBKDF2 ile turetilen AES anahtariyla
+ *  sarilir ve sunucuya **sarili halde** yuklenir. Sunucu plaintext ozel anahtari
+ *  hicbir zaman gormez; ancak dogru sifreyi bilen kullanici sarmayi acabilir.
  */
 const KripoCrypto = {
-  async generateKeyPair() {
+  // ------------ Anahtar uretimi ------------
+
+  generateEncryptionKeyPair() {
     return crypto.subtle.generateKey(
       {
         name: 'RSA-OAEP',
@@ -21,17 +31,26 @@ const KripoCrypto = {
     );
   },
 
-  async exportPublicKey(key) {
-    const spki = await crypto.subtle.exportKey('spki', key);
-    return this.bufToBase64(spki);
+  generateSigningKeyPair() {
+    return crypto.subtle.generateKey(
+      {
+        name: 'RSA-PSS',
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
+      true,
+      ['sign', 'verify']
+    );
   },
 
-  async exportPrivateKey(key) {
-    const pkcs8 = await crypto.subtle.exportKey('pkcs8', key);
-    return this.bufToBase64(pkcs8);
+  // ------------ Anahtar import/export ------------
+
+  async exportSpki(key) {
+    return this.bufToBase64(await crypto.subtle.exportKey('spki', key));
   },
 
-  async importPublicKey(b64) {
+  async importEncryptionPublicKey(b64) {
     return crypto.subtle.importKey(
       'spki',
       this.base64ToBuf(b64),
@@ -41,7 +60,17 @@ const KripoCrypto = {
     );
   },
 
-  async importPrivateKey(b64) {
+  async importSigningPublicKey(b64) {
+    return crypto.subtle.importKey(
+      'spki',
+      this.base64ToBuf(b64),
+      { name: 'RSA-PSS', hash: 'SHA-256' },
+      false,
+      ['verify']
+    );
+  },
+
+  async importEncryptionPrivateKey(b64) {
     return crypto.subtle.importKey(
       'pkcs8',
       this.base64ToBuf(b64),
@@ -51,11 +80,88 @@ const KripoCrypto = {
     );
   },
 
+  async importSigningPrivateKey(b64) {
+    return crypto.subtle.importKey(
+      'pkcs8',
+      this.base64ToBuf(b64),
+      { name: 'RSA-PSS', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+  },
+
+  // ------------ Sifreden anahtar uretme (PBKDF2) ------------
+
   /**
-   * Mesaji aliciya ait acik anahtarla sifrele.
-   * Donus: { ciphertext, iv, encryptedKey } — hepsi base64.
+   * Kullanici sifresinden, sarmak/cozmek icin kullanilacak AES-GCM-256
+   * anahtarini turet. Iterasyon sayisi OWASP 2023 tavsiyesi (>= 310,000).
    */
-  async encryptMessage(plaintext, recipientPublicKeyB64) {
+  async deriveWrappingKey(password, saltB64) {
+    const baseKey = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(password),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: this.base64ToBuf(saltB64),
+        iterations: 310000,
+        hash: 'SHA-256',
+      },
+      baseKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  },
+
+  /**
+   * RSA ozel anahtarini PKCS8 olarak disa aktar, ardindan AES-GCM ile sar.
+   */
+  async wrapPrivateKey(privateKey, wrappingKey) {
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', privateKey);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const wrapped = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      wrappingKey,
+      pkcs8
+    );
+    return {
+      wrapped: this.bufToBase64(wrapped),
+      iv: this.bufToBase64(iv),
+    };
+  },
+
+  /**
+   * Sarili ozel anahtari coz. Sifre yanlissa AES-GCM butunluk kontrolu
+   * exception firlatir.
+   */
+  async unwrapPrivateKey(wrappedB64, ivB64, wrappingKey) {
+    const pkcs8 = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: this.base64ToBuf(ivB64) },
+      wrappingKey,
+      this.base64ToBuf(wrappedB64)
+    );
+    return this.bufToBase64(pkcs8);
+  },
+
+  // ------------ Mesaj sifreleme / cozme ------------
+
+  /**
+   * Mesaji aliciya ait acik anahtarla sifrele ve gondericinin imzasiyla
+   * imzala.
+   *
+   * @param plaintext             {string}
+   * @param recipientEncPubB64    {string} Alicinin RSA-OAEP acik anahtari
+   * @param senderSignPrivB64     {string} Gondericinin RSA-PSS ozel anahtari
+   * @param sender                {string} Gonderici kullanici adi
+   * @param recipient             {string} Alici kullanici adi
+   * @returns { ciphertext, iv, encryptedKey, signature, signedAt }
+   */
+  async encryptAndSign(plaintext, recipientEncPubB64, senderSignPrivB64, sender, recipient) {
     const aesKey = await crypto.subtle.generateKey(
       { name: 'AES-GCM', length: 256 },
       true,
@@ -69,29 +175,63 @@ const KripoCrypto = {
     );
 
     const rawAesKey = await crypto.subtle.exportKey('raw', aesKey);
-    const rsaPubKey = await this.importPublicKey(recipientPublicKeyB64);
+    const recipientPub = await this.importEncryptionPublicKey(recipientEncPubB64);
     const encryptedKeyBuf = await crypto.subtle.encrypt(
       { name: 'RSA-OAEP' },
-      rsaPubKey,
+      recipientPub,
       rawAesKey
     );
 
+    const ciphertextB64 = this.bufToBase64(ciphertextBuf);
+    const ivB64 = this.bufToBase64(iv);
+    const encryptedKeyB64 = this.bufToBase64(encryptedKeyBuf);
+    const signedAt = Date.now();
+
+    // Imzayi paketin BUTUN ana alanlari uzerine at — alici tek bir alan bile
+    // degisirse imzayi dogrulayamasin.
+    const signingPayload = `${sender}|${recipient}|${signedAt}|${ivB64}|${encryptedKeyB64}|${ciphertextB64}`;
+    const signingKey = await this.importSigningPrivateKey(senderSignPrivB64);
+    const signatureBuf = await crypto.subtle.sign(
+      { name: 'RSA-PSS', saltLength: 32 },
+      signingKey,
+      new TextEncoder().encode(signingPayload)
+    );
+
     return {
-      ciphertext: this.bufToBase64(ciphertextBuf),
-      iv: this.bufToBase64(iv),
-      encryptedKey: this.bufToBase64(encryptedKeyBuf),
+      ciphertext: ciphertextB64,
+      iv: ivB64,
+      encryptedKey: encryptedKeyB64,
+      signature: this.bufToBase64(signatureBuf),
+      signedAt,
     };
   },
 
   /**
-   * Sifreli paketi (ciphertext+iv+encryptedKey) kendi ozel anahtarinla coz.
+   * Gelen mesajin imzasini dogrula, ardindan ozel anahtarla coz.
+   *
+   * @returns { plaintext, verified, verifyError? }
    */
-  async decryptMessage(payload, privateKeyB64) {
-    const rsaPrivKey = await this.importPrivateKey(privateKeyB64);
+  async verifyAndDecrypt(message, recipientEncPrivB64, senderSignPubB64) {
+    const signingPayload = `${message.sender}|${message.recipient}|${message.signedAt}|${message.iv}|${message.encryptedKey}|${message.ciphertext}`;
+    let verified = false;
+    let verifyError = null;
+    try {
+      const sigPubKey = await this.importSigningPublicKey(senderSignPubB64);
+      verified = await crypto.subtle.verify(
+        { name: 'RSA-PSS', saltLength: 32 },
+        sigPubKey,
+        this.base64ToBuf(message.signature),
+        new TextEncoder().encode(signingPayload)
+      );
+    } catch (e) {
+      verifyError = e.message;
+    }
+
+    const privKey = await this.importEncryptionPrivateKey(recipientEncPrivB64);
     const rawAesKey = await crypto.subtle.decrypt(
       { name: 'RSA-OAEP' },
-      rsaPrivKey,
-      this.base64ToBuf(payload.encryptedKey)
+      privKey,
+      this.base64ToBuf(message.encryptedKey)
     );
     const aesKey = await crypto.subtle.importKey(
       'raw',
@@ -101,11 +241,23 @@ const KripoCrypto = {
       ['decrypt']
     );
     const plaintextBuf = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: this.base64ToBuf(payload.iv) },
+      { name: 'AES-GCM', iv: this.base64ToBuf(message.iv) },
       aesKey,
-      this.base64ToBuf(payload.ciphertext)
+      this.base64ToBuf(message.ciphertext)
     );
-    return new TextDecoder().decode(plaintextBuf);
+
+    return {
+      plaintext: new TextDecoder().decode(plaintextBuf),
+      verified,
+      verifyError,
+    };
+  },
+
+  // ------------ Yardimcilar ------------
+
+  randomSaltB64(bytes = 16) {
+    const salt = crypto.getRandomValues(new Uint8Array(bytes));
+    return this.bufToBase64(salt);
   },
 
   bufToBase64(buf) {

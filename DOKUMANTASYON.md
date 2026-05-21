@@ -8,7 +8,7 @@ tarayicisinda sifrelenir, sunucuya yalnizca sifreli hali gider, alicinin
 tarayicisinda cozulur. **Sunucu mesajin icerigine erisemez** — veritabaninda
 sadece anlamsiz bayt dizileri durur.
 
-Bu, WhatsApp/Signal gibi uygulamalarin temel calismaprenibibinin sadelestirilmis
+Bu, WhatsApp/Signal gibi uygulamalarin temel calisma prensibinin sadelestirilmis
 bir versiyonudur.
 
 ## 2. Mimari
@@ -18,26 +18,31 @@ bir versiyonudur.
 |   Alice'in         |        |     Sunucu         |        |   Bob'un           |
 |   tarayicisi       |        |   (Node.js)        |        |   tarayicisi       |
 |                    |        |                    |        |                    |
-|  - Anahtar uret    |        |  - Kullanicilari   |        |  - Anahtar uret    |
-|  - Mesaji sifrele  | -----> |    sakla           | -----> |  - Mesaji coz      |
-|  - Sifreli yolla   |        |  - Acik anahtari   |        |                    |
-|  - Gelen sifreliyi |        |    dagit           |        |                    |
-|    coz             |        |  - Sifreli mesaji  |        |                    |
-|                    |        |    sakla & ilet    |        |                    |
+|  - Iki RSA cifti   |        |  - Kullanicilari   |        |  - Iki RSA cifti   |
+|    uret (sifre +   |        |    sakla           |        |    uret            |
+|    imza)           | -----> |  - Sarili ozel     | -----> |                    |
+|  - Ozel anahtari   |        |    anahtarlari     |        |  - Sifreyle        |
+|    sifre ile sar   |        |    sakla           |        |    ozel anahtari   |
+|  - Mesaji sifrele  |        |  - Acik anahtari   |        |    coz             |
+|  - Imzala          |        |    dagit           |        |  - Imzayi dogrula  |
+|  - Sifreli + imzali|        |  - Sifreli mesaji  |        |  - Mesaji coz      |
+|    paketi yolla    |        |    sakla & ilet    |        |                    |
 +--------------------+        +--------------------+        +--------------------+
        (özel anahtar              (sadece şifreli              (özel anahtar
-        burada kalır)              veriyi görür)                burada kalır)
+        sifre ile sarili)           veriyi görür)                sifre ile sarili)
 ```
 
 ### 2.1 Bilesenler
 
-| Katman      | Teknoloji                           | Gorevi                                       |
-| ----------- | ----------------------------------- | -------------------------------------------- |
-| Frontend    | HTML + CSS + Vanilla JavaScript     | Kullanici arayuzu                            |
-| Sifreleme   | Web Crypto API (tarayicinin yerleşik) | RSA-OAEP-2048 + AES-GCM-256                  |
-| Backend     | Node.js + Express                   | HTTP API                                     |
-| Veritabani  | SQLite (`better-sqlite3`)           | Kullanicilar, oturumlar, sifreli mesajlar    |
-| Sifre hash  | bcryptjs                            | Kullanici sifrelerinin hash'lenmesi          |
+| Katman      | Teknoloji                                         | Gorevi                                       |
+| ----------- | ------------------------------------------------- | -------------------------------------------- |
+| Frontend    | HTML + CSS + Vanilla JavaScript                   | Kullanici arayuzu                            |
+| Sifreleme   | Web Crypto API (tarayicinin yerleşik)             | RSA-OAEP + RSA-PSS + AES-GCM + PBKDF2        |
+| Backend     | Node.js + Express                                 | HTTP API                                     |
+| Guvenlik    | helmet, express-rate-limit                        | Guvenlik basliklari, brute-force koruma      |
+| Veritabani  | SQLite (`better-sqlite3`, WAL mode)               | Kullanicilar, oturumlar, sifreli mesajlar    |
+| Sifre hash  | bcryptjs (cost 12)                                | Kullanici sifrelerinin hash'lenmesi          |
+| Deploy      | Docker / Render / Fly.io                          | Production hosting                           |
 
 ### 2.2 Klasor yapisi
 
@@ -45,6 +50,11 @@ bir versiyonudur.
 kripto-site/
 ├── server.js              # Express backend
 ├── package.json
+├── Dockerfile             # Production container imaji
+├── .dockerignore
+├── render.yaml            # Render.com deploy config
+├── fly.toml               # Fly.io deploy config
+├── .env.example           # Ornek environment variable'lar
 ├── public/
 │   ├── index.html         # Tek sayfa: giris + chat ekrani
 │   ├── styles.css         # Goruntu
@@ -56,96 +66,189 @@ kripto-site/
 
 ## 3. Sifreleme akisi (en kritik kisim)
 
-Iki tip sifreleme algoritmasi birlikte kullanilir. Buna **hibrit sifreleme**
-denir; gercek dunyadaki PGP, S/MIME ve TLS de ayni mantigi kullanir.
+Dort farkli kripto primitifini birlikte kullaniriz. Buna **hibrit sifreleme** denir;
+gercek dunyadaki PGP, S/MIME ve TLS de ayni mantigi kullanir.
 
-### 3.1 Neden iki algoritma?
+| Algoritma  | Parametre          | Kullanim                                                    |
+| ---------- | ------------------ | ----------------------------------------------------------- |
+| RSA-OAEP   | 2048-bit, SHA-256  | AES anahtarinin alicinin acik anahtariyla sarilmasi         |
+| RSA-PSS    | 2048-bit, SHA-256  | Mesajin gonderici tarafindan imzalanmasi (kimlik dogrulama) |
+| AES-GCM    | 256-bit + 96-bit IV| Asil mesaj sifrelemesi (gizlilik + butunluk birlikte)       |
+| PBKDF2     | SHA-256, 310k iter | Kullanici sifresinden ozel anahtarlari saracak anahtar uret |
+| Bcrypt     | cost 12            | Sunucu tarafinda sifre hash'leme                            |
+
+### 3.1 Neden bu kadar algoritma var?
 
 - **AES (simetrik)**: cok hizli ama her iki tarafin da ayni anahtari bilmesi
   gerekir. "Ayni anahtari nasil guvenle paylasiriz?" sorusu kalir.
-- **RSA (asimetrik)**: yavas ama "acik anahtarla sifrele, ozel anahtarla coz"
-  yapisi sayesinde anahtar paylasimi problemini cozer.
+- **RSA-OAEP (asimetrik sifreleme)**: yavas ama "acik anahtarla sifrele, ozel
+  anahtarla coz" yapisi sayesinde anahtar paylasimi problemini cozer.
+- **RSA-PSS (asimetrik imza)**: "ozel anahtarla imzala, acik anahtarla dogrula".
+  Bu olmadan sunucu, kotu niyetli olsa, sahte mesajlar uretip "alice gonderdi"
+  diye gosterebilir. Imza ile alici, gondericinin kimliginden emin olur.
+- **PBKDF2**: kullanicinin RSA ozel anahtari sunucuda da bir yerde tutulmali
+  (yoksa baska tarayicidan giremezsin). Ama plaintext olarak tutmak felaket olur.
+  Cozum: kullanicinin sifresinden 310,000 iterasyonla bir AES anahtari turetip
+  ozel anahtari onunla sar. Sifreyi bilmeyen (sunucu dahil) acamaz.
+- **Bcrypt**: sifre hashing'i icin standart secim. 12 cost factor su an icin
+  yeterli yavaslikta (~250ms/hash).
 
-Cozum: **kucuk olan AES anahtarini RSA ile sifrele, asil mesaji AES ile sifrele.**
+### 3.2 Kayit akisi (adim adim)
 
-### 3.2 Adim adim sifreleme (gondericide)
+`public/app.js` icinde `register-form` event handler:
 
-Alice, Bob'a mesaj gonderecek. `public/crypto.js`'in `encryptMessage` fonksiyonu:
+1. Tarayici **iki RSA cifti uretir**: biri RSA-OAEP (sifreleme), biri RSA-PSS (imza).
+2. **Rastgele 16 bayt tuz (salt)** uretilir.
+3. Kullanici sifresinden PBKDF2 ile **AES-GCM-256 sarma anahtari** turetilir
+   (310,000 SHA-256 iterasyonu).
+4. Her iki ozel anahtar bu sarma anahtariyla AES-GCM ile sarilir.
+5. Sunucuya yollanir:
+   - `username`, `password` (sunucu bcrypt'leyip saklar)
+   - `encPublicKey`, `signPublicKey` (acik halde)
+   - `wrappedEncPrivateKey`, `wrappedSignPrivateKey`, `keySalt`, `encPrivIv`, `signPrivIv`
+     (ozel anahtarlar sifreyle sarilmis halde — sunucu acamaz)
+6. Sunucu kayit yapar ve oturum token'i doner.
+7. Tarayici, ham ozel anahtarlari **sessionStorage**'da tutar (tab kapaninca silinir).
 
-1. **Rastgele bir AES-GCM-256 anahtari uret.** (Her mesaj icin yeni.)
-2. **Rastgele bir IV (12 bayt) uret.** GCM modunda IV her seferinde benzersiz olmalidir.
+### 3.3 Giris akisi (adim adim)
+
+1. Kullanici `username` + `password` gonderir.
+2. Sunucu bcrypt ile sifreyi dogrular ve oturum token'i + sarili anahtarlari doner.
+3. Tarayici, kullanicinin sifresinden ayni PBKDF2 ile sarma anahtarini yeniden uretir.
+4. Sarili ozel anahtarlari acar (AES-GCM-decrypt).
+5. Anahtarlar sessionStorage'a yazilir.
+
+Yanlis sifre verilirse: AES-GCM cozme **butunluk dogrulamasi** sayesinde basarisiz olur
+ve hata firlatir (AES-GCM bir AEAD mod, sifre yanlissa veri reddedilir — magic).
+
+### 3.4 Mesaj gonderme akisi
+
+`KripoCrypto.encryptAndSign` (public/crypto.js):
+
+1. **Rastgele AES-GCM-256 anahtari uret.** (Her mesaj icin yeni — bir mesaj
+   ele gecirilirse digerleri etkilenmez.)
+2. **Rastgele 12 bayt IV uret.**
 3. **Mesaji UTF-8'e cevir** ve AES-GCM ile sifrele → `ciphertext`.
-4. **AES anahtarini ham bayt olarak dis ari aktar** (32 bayt).
-5. **Bob'un RSA acik anahtarini al** (sunucudan `/api/users/bob/key` ile).
-6. **AES anahtarini Bob'un RSA acik anahtariyla sifrele** → `encryptedKey`.
-7. Sunucuya gonder: `{ ciphertext, iv, encryptedKey }` (her uçü de base64).
+4. AES anahtarini ham bayt olarak dis ari aktar (32 bayt).
+5. Alicinin RSA-OAEP acik anahtarini sunucudan al.
+6. **AES anahtarini alicinin RSA-OAEP acik anahtariyla sifrele** → `encryptedKey`.
+7. **Imzalama yuk metni hazirla**:
+   `sender|recipient|signedAt|iv|encryptedKey|ciphertext`
+   (Buradaki tum alanlar imzaya dahil; saldirgan herhangi birini degistirirse
+    imza dogrulamasi basarisiz olur.)
+8. Bu yuku **gondericinin RSA-PSS ozel anahtariyla imzala** → `signature`.
+9. Sunucuya gonder: `{ to, ciphertext, iv, encryptedKey, signature, signedAt }`.
 
-### 3.3 Adim adim cozme (alicida)
+Sunucu ek olarak:
+- `signedAt`'in 5 dakikadan eski/ileri olmadigini kontrol eder (replay koruma).
+- `to != sender` zorunlu.
+- Rate limit: dakikada 60 mesaj.
 
-Bob, gelen paketi alir. `decryptMessage` fonksiyonu:
+### 3.5 Mesaj alma akisi
 
-1. **Kendi RSA ozel anahtarini** localStorage'dan al.
-2. **`encryptedKey`'i RSA ozel anahtariyla coz** → ham AES anahtarini elde et.
-3. **AES anahtarini Web Crypto'ya import et.**
-4. **`ciphertext`'i AES-GCM ile coz** (IV ile birlikte) → mesajin UTF-8'i.
-5. UTF-8'i metne cevir → orjinal mesaj.
+`KripoCrypto.verifyAndDecrypt`:
 
-### 3.4 Anahtar yonetimi
+1. Gondericinin RSA-PSS acik anahtarini sunucudan al (cache'le).
+2. Ayni imzalama yuk metnini yeniden kur.
+3. **Imzayi dogrula.** Basarisizsa mesaj UI'da **kirmizi cerceveyle "IMZA GECERSIZ"** etiketiyle gosterilir.
+4. `encryptedKey`'i kendi RSA-OAEP ozel anahtariyla coz → AES anahtarini elde et.
+5. AES anahtarini Web Crypto'ya import et.
+6. `ciphertext`'i AES-GCM ile coz (IV ile birlikte) → UTF-8 plaintext.
 
-- Kayit anindaki RSA anahtar cifti tarayicida `crypto.subtle.generateKey` ile uretilir.
-- **Acik anahtar (public key)** sunucuya yollanir, veritabaninda `users.public_key`
-  olarak durur. Diger kullanicilara dagitilir.
-- **Ozel anahtar (private key)** tarayicidan asla cikmaz — `localStorage.privateKey`
-  alanina kaydedilir.
-- Bu sebeple **baska bir tarayicidan girersen eski mesajlarini cozemezsin** (cunku
-  ozel anahtar o tarayicida yok). Bu E2EE'nin dogal sonucudur ve Signal/WhatsApp'ta
-  da boyledir.
+### 3.6 Anahtar yonetimi
 
-## 4. Backend API
+- **Iki cift RSA anahtari** vardir: sifreleme (RSA-OAEP) ve imza (RSA-PSS).
+  Cryptographic best practice: bir anahtarin sadece bir gorevi olsun.
+- **Acik anahtarlar** sunucuda duz halde durur, herkese dagitilir.
+- **Ozel anahtarlar** sunucuda **sifre ile sarili** halde durur. Sunucu acamaz.
+- Calisma sirasinda acilmis ozel anahtarlar tarayicinin **sessionStorage**'inde
+  durur — tab kapatildiginda otomatik silinir.
+- Sayfa yenilenirse (tab acikken) anahtarlar hala sessionStorage'da; refresh'te
+  sorun olmaz. Tab kapatilirsa tekrar sifre ile kilidi acilir (`unlock` ekrani).
 
-Tum istekler JSON, kimlik dogrulamasi `Authorization: Bearer <token>` header'i ile.
+## 4. Guvenlik onlemleri
 
-| Metod | Yol                          | Aciklama                                 |
-| ----- | ---------------------------- | ---------------------------------------- |
-| POST  | `/api/register`              | `{username, password, publicKey}` → `{token}` |
-| POST  | `/api/login`                 | `{username, password}` → `{token}`       |
-| POST  | `/api/logout`                | Oturumu silmek                           |
-| GET   | `/api/me`                    | Oturum gecerli mi?                       |
-| GET   | `/api/users`                 | Diger kullanicilarin listesi             |
-| GET   | `/api/users/:username/key`   | Bir kullanicinin acik anahtari           |
-| POST  | `/api/messages`              | `{to, ciphertext, iv, encryptedKey}`     |
-| GET   | `/api/messages?with=X&since=T` | Belirli bir kullaniciyla mesajlar     |
+| Konu                              | Cozum                                                           |
+| --------------------------------- | --------------------------------------------------------------- |
+| Sunucudan sizinti                 | Ozel anahtarlar AES-GCM ile sarili; PBKDF2 (310k iter) lazim    |
+| Sunucu sahte mesaj iddiasi        | Her mesaj RSA-PSS ile imzali, alici dogruluyor                  |
+| Sifre brute-force                 | bcrypt cost 12 + login icin 15 dk/20 deneme rate-limit          |
+| Mesaj flood                       | Dakikada 60 mesaj rate-limit                                    |
+| Replay (eski mesajin tekrarli) | `signedAt` zaman damgasi imzaya dahil + 5 dk pencere          |
+| Mesaj kurcalama                   | RSA-PSS imzasi tum alanlari korur + AES-GCM butunluk tag'i      |
+| XSS                               | Helmet CSP (sadece self, inline yok); `textContent` kullaniliyor|
+| Clickjacking                      | `frame-ancestors: 'none'` + X-Frame-Options DENY                |
+| MITM                              | HSTS + HTTPS yonlendirme (production'da)                        |
+| Oturum bekleme                    | Token 7 gun sonra otomatik suresi dolar, saatlik temizlik       |
+| Username enumeration              | Login'de sabit-zamanli bcrypt karsilastirma (phony hash)        |
+| SQL injection                     | Tum sorgular prepared statement                                 |
+| Path traversal                    | Express.static + sanitized parametre                            |
+| Bilgi sizintisi (stack trace)     | Production hata yakalayicisi sadece `{error}` doner             |
 
-### 4.1 Veritabani semasi
+### 4.1 Hala kalan eksiklikler (rapor icin durustluk)
+
+- **Forward secrecy yok.** Ayni RSA cifti tum mesajlarda kullanilir. Anahtar
+  cifti ele gecirilirse tum gecmis mesajlar cozulebilir. Tam cozum Signal'in
+  Double Ratchet protokolu — okul projesi icin fazla karmasik.
+- **Meta-veri sunucuda goruluyor.** Kim-kime-ne-zaman bilgisi sifreli degil.
+- **Sifre kurtarma yok.** Kullanici sifresini unutursa eski mesajlarini sonsuza
+  kadar kaybeder. Bu E2EE'nin dogal sonucu (Signal'da da boyledir).
+
+## 5. Backend API
+
+Tum istekler JSON, kimlik dogrulama `Authorization: Bearer <token>` header'i ile.
+
+| Metod | Yol                          | Aciklama                                          |
+| ----- | ---------------------------- | ------------------------------------------------- |
+| GET   | `/api/health`                | Servis ayakta mi (deploy health-check icin)       |
+| POST  | `/api/register`              | Yeni kullanici + sarili anahtarlar                |
+| POST  | `/api/login`                 | Sifre ile giris, sarili anahtarlari geri doner    |
+| POST  | `/api/logout`                | Oturumu silmek                                    |
+| GET   | `/api/me`                    | Mevcut kullanicinin sarili anahtarlarini al       |
+| GET   | `/api/users`                 | Diger kullanicilarin listesi                      |
+| GET   | `/api/users/:username/keys`  | Bir kullanicinin **iki** acik anahtari (enc+sign) |
+| POST  | `/api/messages`              | Sifreli + imzali mesaj gonder                     |
+| GET   | `/api/messages?with=X&since=T`| Belirli bir kullaniciyla mesajlar                |
+
+### 5.1 Veritabani semasi
 
 ```sql
 users (
-  username       TEXT PRIMARY KEY,
-  password_hash  TEXT NOT NULL,     -- bcrypt
-  public_key     TEXT NOT NULL,     -- base64 SPKI
-  created_at     INTEGER
+  username                  TEXT PRIMARY KEY,
+  password_hash             TEXT NOT NULL,     -- bcrypt cost 12
+  enc_public_key            TEXT NOT NULL,     -- base64 SPKI (RSA-OAEP)
+  sign_public_key           TEXT NOT NULL,     -- base64 SPKI (RSA-PSS)
+  wrapped_enc_private_key   TEXT NOT NULL,     -- AES-GCM ile sarili
+  wrapped_sign_private_key  TEXT NOT NULL,     -- AES-GCM ile sarili
+  key_salt                  TEXT NOT NULL,     -- PBKDF2 tuzu
+  enc_priv_iv               TEXT NOT NULL,     -- AES-GCM IV (enc icin)
+  sign_priv_iv              TEXT NOT NULL,     -- AES-GCM IV (sign icin)
+  created_at                INTEGER
 )
 
 sessions (
-  token          TEXT PRIMARY KEY,
-  username       TEXT NOT NULL,
-  created_at     INTEGER
+  token       TEXT PRIMARY KEY,
+  username    TEXT NOT NULL,
+  created_at  INTEGER,
+  expires_at  INTEGER      -- Oturum suresi (7 gun varsayilan)
 )
 
 messages (
-  id             INTEGER PRIMARY KEY,
-  sender         TEXT NOT NULL,
-  recipient      TEXT NOT NULL,
-  ciphertext     TEXT NOT NULL,     -- base64, sunucu ICERIGI GORMUYOR
-  iv             TEXT NOT NULL,
-  encrypted_key  TEXT NOT NULL,     -- base64 RSA-OAEP ciktisi
-  created_at     INTEGER
+  id            INTEGER PRIMARY KEY,
+  sender        TEXT NOT NULL,
+  recipient     TEXT NOT NULL,
+  ciphertext    TEXT NOT NULL,     -- base64, sunucu ICERIGI GORMUYOR
+  iv            TEXT NOT NULL,
+  encrypted_key TEXT NOT NULL,     -- base64 RSA-OAEP ciktisi
+  signature     TEXT NOT NULL,     -- base64 RSA-PSS imzasi
+  signed_at     INTEGER NOT NULL,  -- replay korumasi icin
+  created_at    INTEGER
 )
 ```
 
-## 5. Demo nasil yapilir
+## 6. Demo nasil yapilir
 
-### 5.1 Lokal demo (tek bilgisayar)
+### 6.1 Lokal demo (tek bilgisayar)
 
 ```bash
 npm install
@@ -154,100 +257,143 @@ npm start
 
 Sonra:
 1. `http://localhost:3000` adresini ac.
-2. Bir pencerede **Kayit ol** → `alice` / `1234`.
-3. Ayni siteyi **gizli pencerede** ac (normal pencereyle ayni localStorage'i
-   paylasmasin diye) → **Kayit ol** → `bob` / `1234`.
+2. Bir pencerede **Kayit ol** → `alice` / `gizli12345`.
+3. Ayni siteyi **gizli pencerede** ac → **Kayit ol** → `bob` / `gizli67890`.
 4. Alice'in penceresinde sol listede `bob`'u sec, mesaj yaz.
-5. Bob'un penceresinde `alice`'i sec — mesaj cozulmus olarak gelir.
+5. Bob'un penceresinde sol listede `alice`'i sec — mesaj cozulmus olarak gelir.
 6. **"Sifreli icerigi goster"** kutusunu tikla → her mesajin altinda sunucuya
-   giden ciphertext, IV ve sifrelenmis AES anahtari goruntulenir.
+   giden ciphertext, IV, sifrelenmis AES anahtari ve imza goruntulenir.
+7. Her mesajda **"✅ imza dogru"** etiketi gorunmeli.
 
-### 5.2 Iki bilgisayar (gercek demo)
-
-Sunucu internete acik bir yerde calismalı. En kolay yol:
-
-**Render.com (ucretsiz):**
-1. Repoyu GitHub'a push et.
-2. render.com → "New Web Service" → repoyu sec.
-3. Build command: `npm install`, Start command: `npm start`.
-4. Deploy bitince size verilen URL'i arkadasinla paylas.
-
-> Not: SQLite dosyasi ucretsiz tier'da yeniden baslayinca silinebilir. Demo
-> icin sorun degil, ama gercek bir urunde Postgres tercih edilir.
-
-### 5.3 Sunucuda hicbir seyin gorunmedigini dogrulama (hocaya demo)
+### 6.2 Sunucuda hicbir seyin gorunmedigini dogrulama (hocaya demo)
 
 Server calisirken, ayri bir terminalde:
 
 ```bash
-sqlite3 kripto.db "SELECT sender, recipient, ciphertext FROM messages;"
+sqlite3 kripto.db "SELECT sender, recipient, substr(ciphertext, 1, 40) FROM messages;"
 ```
 
-Cikti seyle goz onunde olur:
+Cikti soyle gozukur:
 
 ```
-alice|bob|POUtgcGEIz3fdhkNM6zom...
+alice|bob|POUtgcGEIz3fdhkNM6zomF36e75mZ1C9PXZZy2rL...
 ```
 
 `ciphertext` sutununda hicbir okunabilir metin yok. Mesaji okuyabilmek icin
-Bob'un ozel anahtarina ihtiyac var; o da yalnizca Bob'un tarayicisinda.
+alicinin **sifre ile acilmis** ozel anahtarina ihtiyac var; o da yalnizca
+alicinin tarayicisinda ve sifre bilgisiyle erisilebilir.
 
-## 6. Guvenlik notlari ve sinirlamalar
+Ekstra demo: `users` tablosuna bak:
+```bash
+sqlite3 kripto.db "SELECT username, substr(wrapped_enc_private_key, 1, 40) FROM users;"
+```
+Ozel anahtarlarin sarili (anlamsiz bayt) durdugunu goster.
 
-Bu bir okul projesi oldugundan bazi sadelestirmeler yapildi. Gercek bir urunde
-yapilmasi gerekenler:
+## 7. Production deployment
 
-| Konu                                    | Mevcut durum                     | Olmasi gereken                                                          |
-| --------------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
-| HTTPS                                   | Yok (lokal)                      | Production'da zorunlu (TLS sertifikasi)                                 |
-| Ozel anahtar saklama                    | Duz halde localStorage           | Kullanicinin sifresinden turetilen bir anahtarla sifreli sakla (PBKDF2) |
-| Mesaj butunlugu (gondericiyi dogrulama) | Sadece oturum token'i ile        | Imzalama: gonderici ayrica mesaji ozel anahtariyla imzalamali           |
-| Forward secrecy                         | Yok (ayni RSA anahtari hep ayni) | Double Ratchet (Signal'in yaptigi)                                      |
-| Meta-veri                               | Sunucu kim-kimle-ne-zaman gorur  | Onion routing / mix-net (cok zor)                                       |
-| Sifre policy                            | Min 4 karakter                   | Daha guclu kurallar, rate limit                                         |
+### 7.1 Render.com (en kolay, ucretsiz, kredi karti gerekmez)
 
-## 7. Kullanilan kripto algoritmalarinin parametreleri
+1. Repoyu GitHub'a push et.
+2. https://render.com → kayit ol (GitHub ile).
+3. **New +** → **Web Service** → repoyu sec.
+4. Render `render.yaml`'i otomatik bulur. **Apply** de.
+5. Birkac dakika sonra `https://kripto-site-xxxx.onrender.com` calisir.
 
-| Algoritma | Parametre              | Kaynak                          |
-| --------- | ---------------------- | ------------------------------- |
-| RSA-OAEP  | 2048-bit, SHA-256 hash | NIST SP 800-56B Rev. 2          |
-| AES-GCM   | 256-bit anahtar, 96-bit IV | NIST SP 800-38D             |
-| Bcrypt    | 10 cost factor         | OpenBSD ekibinin orijinal makalesi |
-| Oturum token | 32 bayt rastgele (crypto.randomBytes) | -            |
+> ⚠️ Render free tier'da kalici disk yok. 15 dakika kullanilmazsa servis uyur,
+> uyandiginda SQLite dosyasi sifirlanabilir. Hocaya demo sirasinda yeni
+> hesaplar acip canli mesajlasarak gostermek yeterli.
+
+### 7.2 Fly.io (kalici veri, biraz daha karmasik)
+
+```bash
+# flyctl kur: https://fly.io/docs/hands-on/install-flyctl/
+flyctl auth signup
+flyctl launch --copy-config --no-deploy   # app ismini onayla
+flyctl volumes create data --size 1 --region fra
+flyctl deploy
+```
+
+Fly.io free tier'da 3GB volume hakkin var, SQLite kalici olarak durur.
+
+### 7.3 Docker (kendi VPS'inde)
+
+```bash
+docker build -t kripto-site .
+docker run -d \
+  -p 80:3000 \
+  -e NODE_ENV=production \
+  -v $(pwd)/data:/data \
+  --name kripto kripto-site
+```
+
+HTTPS icin onune **Caddy** veya **nginx + Let's Encrypt** koy.
+
+### 7.4 Mirror (yedek deploy)
+
+"Mirror" iki anlama gelebilir:
+
+**A) Repo yedegi (git mirror):**
+```bash
+# GitHub repo'sunu GitLab'a aynalamak
+git clone --mirror https://github.com/USER/kripto-site.git
+cd kripto-site.git
+git remote set-url --push origin https://gitlab.com/USER/kripto-site.git
+git push --mirror
+```
+
+**B) Ikinci host'a yedek deploy (showroom yedegi):**
+- Primary: Render.com → `https://kripto-site.onrender.com`
+- Mirror: Fly.io veya Glitch → `https://kripto-site.fly.dev`
+
+Iki host birbirinden bagimsiz. **Veritabanlari ayri** (her ikisinin kendi
+kullanici listesi vardir). Demo sirasinda biri inerse digerine gec.
+
+> Onemli: gercek bir uygulamada veritabanini senkron tutmak gerekir ama bu
+> okul projesinde gereksiz.
 
 ## 8. Kod akisinin ozeti
 
-### 8.1 Kayit (register)
+### 8.1 Kayit
 
 ```
 [Tarayici]
-  KripoCrypto.generateKeyPair()           // RSA-OAEP-2048
-  → publicKey, privateKey
-  localStorage.privateKey = privateKey
-  POST /api/register { username, password, publicKey }
+  KC.generateEncryptionKeyPair()           // RSA-OAEP-2048
+  KC.generateSigningKeyPair()              // RSA-PSS-2048
+  salt = random(16 bytes)
+  wrappingKey = PBKDF2(password, salt, 310k iter)
+  wrappedEncPriv = AES-GCM.encrypt(encPriv_pkcs8, wrappingKey)
+  wrappedSignPriv = AES-GCM.encrypt(signPriv_pkcs8, wrappingKey)
+  POST /api/register { username, password, encPub, signPub,
+                       wrappedEncPriv, wrappedSignPriv, salt, iv'ler }
 
 [Sunucu]
-  bcrypt.hash(password)
+  bcrypt.hash(password, cost=12)
   INSERT INTO users
-  yeni rastgele token uret
+  yeni rastgele 32-byte session token
   INSERT INTO sessions
-  → { token }
+  → { token, expiresAt }
 ```
 
 ### 8.2 Mesaj gonderme
 
 ```
 [Alice'in tarayicisi]
-  GET /api/users/bob/key                   // Bob'un public key'ini al
-  KripoCrypto.encryptMessage(text, bobPub)
+  GET /api/users/bob/keys                   // { encPublicKey, signPublicKey }
+  KC.encryptAndSign(text, bobEncPub, aliceSignPriv, 'alice', 'bob')
     aes = AES-256-GCM rastgele anahtar
     iv = 12 bayt rastgele
     ciphertext = AES-GCM.encrypt(text, aes, iv)
-    encryptedKey = RSA-OAEP.encrypt(aes, bobPub)
-  POST /api/messages { to: 'bob', ciphertext, iv, encryptedKey }
+    encryptedKey = RSA-OAEP.encrypt(aes, bobEncPub)
+    signedAt = Date.now()
+    payload = sender|recipient|signedAt|iv|encryptedKey|ciphertext
+    signature = RSA-PSS.sign(payload, aliceSignPriv)
+  POST /api/messages { to:'bob', ciphertext, iv, encryptedKey, signature, signedAt }
 
 [Sunucu]
-  INSERT INTO messages    // sadece ciphertext'i saklar
+  signedAt'i ±5dk kontrol et
+  to != sender kontrol et
+  rate-limit kontrol et (60/dk)
+  INSERT INTO messages    // sadece sifreli + imza saklanir
 ```
 
 ### 8.3 Mesaj alma
@@ -257,23 +403,29 @@ yapilmasi gerekenler:
   Her 2 saniyede:
     GET /api/messages?with=alice&since=<son zaman>
     Her gelen mesaj icin:
-      KripoCrypto.decryptMessage(msg, localStorage.privateKey)
-        aes = RSA-OAEP.decrypt(encryptedKey, bobPriv)
-        text = AES-GCM.decrypt(ciphertext, aes, iv)
-      Ekrana yaz
+      GET /api/users/alice/keys (cache'li)
+      payload = sender|recipient|signedAt|iv|encryptedKey|ciphertext
+      verified = RSA-PSS.verify(signature, payload, aliceSignPub)
+      aes = RSA-OAEP.decrypt(encryptedKey, bobEncPriv)
+      text = AES-GCM.decrypt(ciphertext, aes, iv)
+      Ekrana yaz + imza durumunu goster
 ```
 
 ## 9. Olasi gelistirmeler (zaman kalirsa)
 
 - WebSocket ile gercek zamanli iletim (polling yerine)
 - Dosya/resim gonderme (ayni hibrit yontemle sifrelenir)
-- Anahtar parmak izi (fingerprint) gosterme — arkadasinla telefonla teyit
-- Mesaj imzalama (RSA-PSS ile gondericiyi dogrulama)
-- Mesaj silme & kendini imha eden mesajlar
+- Anahtar parmak izi (fingerprint) gosterme — arkadasinla telefonla teyit et
+- Forward secrecy (Double Ratchet)
+- Kendini imha eden mesajlar / mesaj silme
+- WebAuthn / passkey ile sifresiz giris
+- Grup sohbeti
 
 ## 10. Kaynaklar
 
 - MDN — Web Crypto API: https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API
 - NIST FIPS 197 (AES): https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197.pdf
 - RFC 8017 (PKCS #1 / RSA): https://www.rfc-editor.org/rfc/rfc8017
+- OWASP Password Storage Cheat Sheet (PBKDF2 iter sayisi): https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 - Signal protocol genel bakis: https://signal.org/docs/
+- Helmet (security headers): https://helmetjs.github.io/

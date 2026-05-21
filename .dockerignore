@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+*.db
+*.db-journal
+*.log
+.git
+.gitignore
+.env
+.DS_Store
+DOKUMANTASYON.md
+README.md
+Dockerfile
+render.yaml
+fly.toml

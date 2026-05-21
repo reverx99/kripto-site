@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: kripto-site
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci --only=production
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_TTL_MS
+        value: "604800000"
+      # Render'in free tier'inda kalici disk yok; SQLite dosyasi servis
+      # uyandiginda yeniden olusur. Demo icin yeterli.

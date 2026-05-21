@@ -241,6 +241,11 @@ button.ghost {
   color: #e6e6e6;
 }
 
+.msg.unverified {
+  border: 1px solid #ff6b6b;
+  background: #3a1f23;
+}
+
 .msg .meta {
   font-size: 11px;
   opacity: 0.7;

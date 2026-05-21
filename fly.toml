@@ -1,0 +1,32 @@
+# fly.io deploy yapilandirmasi.
+# Kurulum: https://fly.io/docs/hands-on/install-flyctl/
+# Calistir: flyctl launch --copy-config --no-deploy && flyctl volumes create data --size 1 --region fra && flyctl deploy
+
+app = "kripto-site"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DATA_DIR = "/data"
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/api/health"

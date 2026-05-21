@@ -32,13 +32,30 @@
 
         <form id="register-form" class="auth-form hidden">
           <label>Kullanici adi <input name="username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]+" /></label>
-          <label>Sifre <input name="password" type="password" required minlength="4" autocomplete="new-password" /></label>
+          <label>Sifre (en az 8 karakter) <input name="password" type="password" required minlength="8" autocomplete="new-password" /></label>
           <p class="hint">
-            Kayit olunca tarayicinda RSA-2048 anahtar cifti uretilir. <b>Ozel anahtarin yalnizca bu tarayicida</b>
-            saklanir (localStorage). Baska bilgisayardan giris yaparsan eski mesajlarini cozemezsin.
+            Kayit olunca tarayicinda iki adet RSA-2048 anahtar cifti uretilir (biri sifreleme, biri imzalama).
+            Ozel anahtarlarin sifrenden turetilen bir anahtarla sarilarak sunucuya yuklenir;
+            <b>sifreni bilmeyen kimse</b> (sunucu dahil) bunlari acamaz. Sifreni unutursan eski mesajlarina erisemezsin.
           </p>
           <button type="submit">Kayit ol</button>
           <p class="error" id="register-error"></p>
+        </form>
+      </section>
+
+      <!-- Unlock ekrani (sayfa yenilenince) -->
+      <section id="unlock-view" class="card hidden">
+        <h2>Kilidi ac</h2>
+        <p class="hint">
+          Hosgeldin <b id="unlock-username"></b>! Mesajlari cozmek icin sifreni
+          tekrar gir — bu sifreden uretilen anahtar ozel anahtarlarini acar.
+          Sifre tarayicidan disari cikmaz.
+        </p>
+        <form id="unlock-form" class="auth-form">
+          <label>Sifre <input name="password" type="password" required autocomplete="current-password" /></label>
+          <button type="submit">Kilidi ac</button>
+          <button type="button" id="unlock-logout" class="ghost">Baska kullanici olarak gir</button>
+          <p class="error" id="unlock-error"></p>
         </form>
       </section>
 
