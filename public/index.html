@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kripto Mesaj</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>🔒 Kripto Mesaj</h1>
+      <div id="user-info" class="hidden">
+        <span id="me-label"></span>
+        <button id="logout-btn">Cikis</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- Giris ekrani -->
+      <section id="auth-view" class="card">
+        <div class="tabs">
+          <button class="tab active" data-tab="login">Giris yap</button>
+          <button class="tab" data-tab="register">Kayit ol</button>
+        </div>
+
+        <form id="login-form" class="auth-form">
+          <label>Kullanici adi <input name="username" required autocomplete="username" /></label>
+          <label>Sifre <input name="password" type="password" required autocomplete="current-password" /></label>
+          <button type="submit">Giris yap</button>
+          <p class="error" id="login-error"></p>
+        </form>
+
+        <form id="register-form" class="auth-form hidden">
+          <label>Kullanici adi <input name="username" required minlength="3" maxlength="20" pattern="[a-zA-Z0-9_]+" /></label>
+          <label>Sifre <input name="password" type="password" required minlength="4" autocomplete="new-password" /></label>
+          <p class="hint">
+            Kayit olunca tarayicinda RSA-2048 anahtar cifti uretilir. <b>Ozel anahtarin yalnizca bu tarayicida</b>
+            saklanir (localStorage). Baska bilgisayardan giris yaparsan eski mesajlarini cozemezsin.
+          </p>
+          <button type="submit">Kayit ol</button>
+          <p class="error" id="register-error"></p>
+        </form>
+      </section>
+
+      <!-- Chat ekrani -->
+      <section id="chat-view" class="hidden">
+        <aside class="sidebar">
+          <h2>Kullanicilar</h2>
+          <ul id="user-list"></ul>
+          <button id="refresh-users" class="ghost">Yenile</button>
+        </aside>
+
+        <div class="chat-panel">
+          <div class="chat-header">
+            <span id="peer-label">Sohbet etmek icin soldan birini sec</span>
+            <label class="debug-toggle">
+              <input type="checkbox" id="debug-toggle" /> Sifreli icerigi goster
+            </label>
+          </div>
+          <div id="messages" class="messages"></div>
+          <form id="send-form" class="send-form hidden">
+            <textarea id="message-input" placeholder="Mesajini yaz..." rows="2" required></textarea>
+            <button type="submit">Gonder</button>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <script src="/crypto.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
