@@ -4,7 +4,6 @@ services:
     runtime: node
     plan: free
     region: frankfurt
-    branch: main
     buildCommand: npm ci --only=production
     startCommand: node server.js
     healthCheckPath: /api/health
