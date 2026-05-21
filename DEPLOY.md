@@ -1,129 +1,151 @@
-# Deploy Rehberi (Adim Adim)
+# Deploy Rehberi
 
-Bu rehber, kripto siteni **ucretsiz, kredi karti istemeyen** host'lara nasil
-deploy edecegini gosterir.
+Site su anda canli: **https://kripto-site.onrender.com/**
 
-Kodun zaten su anda **GitHub'da**: `https://github.com/reverx99/kripto-site`
-branch: `claude/focused-bardeen-8mpQA`
+Bu dosya hem nasil deploy ettigimizi belgeler (hoca bakar) hem de demo
+gunu icin pratik talimatlari icerir.
 
 ---
 
-## 1. Render.com (Primary / asil deploy)
+## 1. Mevcut deploy
+
+- **Host**: Render.com (ucretsiz tier, kredi karti istenmedi)
+- **Region**: Frankfurt (EU Central)
+- **Runtime**: Docker (multi-stage build)
+- **URL**: https://kripto-site.onrender.com/
+- **Repo**: https://github.com/reverx99/kripto-site (branch `main`)
+- **Otomatik deploy**: `main`'e push → Render otomatik build & deploy
+
+---
+
+## 2. Yeniden deploy etmek istersen
+
+Render hesabini biz kurduk, kod main'e push edildiginde otomatik
+yeniden deploy olur. Sifirdan kurmak istersen:
 
 ### Adim 1 — Hesap
-1. https://render.com adresine git
-2. **Get Started** → **Sign in with GitHub**
-3. GitHub hesabinla giris yap, izinleri onayla.
+1. https://render.com → **Get Started** → **Sign in with GitHub**
+2. Repo'ya erisim ver (sadece `kripto-site` icin yetki vermen yeter).
 
 ### Adim 2 — Servis olustur
-1. Render dashboard'da sag ust **+ New** → **Web Service**
-2. **Connect a repository** kisminda `reverx99/kripto-site`'i bul ve **Connect**'e bas.
-   - Gozukmuyorsa: **Configure GitHub App** linkine bas, sadece bu repo'ya yetki ver.
-3. Acilan formda:
-   - **Name**: `kripto-site` (URL bunu kullanacak: `kripto-site-xxxx.onrender.com`)
-   - **Region**: `Frankfurt (EU Central)`
-   - **Branch**: `claude/focused-bardeen-8mpQA`  *(dropdown'dan sec)*
-   - **Runtime**: `Node` *(otomatik dolar)*
-   - **Build Command**: `npm ci --only=production`
-   - **Start Command**: `node server.js`
+1. Dashboard'da sag ust **+ New** → **Web Service**
+2. `reverx99/kripto-site`'i sec → **Connect**
+3. Formu doldur:
+   - **Name**: `kripto-site`
+   - **Region**: Frankfurt (EU Central)
+   - **Branch**: `main`
+   - **Language**: Docker (otomatik secilir, Dockerfile var)
    - **Instance Type**: **Free**
-4. **Environment Variables** kisminda **+ Add**:
+4. Environment Variables ekle:
    - `NODE_ENV` = `production`
-5. En altta **Create Web Service** butonuna bas.
+5. **Advanced** → Health Check Path: `/api/health`
+6. **Deploy Web Service**
 
-### Adim 3 — Bekle
-- Render kodu cekip kuracak, ~2-3 dakika.
-- Logs sekmesinde `[production] Kripto site http://localhost:10000 adresinde calisiyor` yazinca hazir.
-- Servis URL'in: `https://kripto-site-XXXX.onrender.com` (sayfanin ustunde yazar)
-
-### Adim 4 — Test
-1. URL'i tarayicida ac.
-2. **Kayit ol** → `alice` / `gizli12345`
-3. Baska bir tarayici/cihaz/arkadasin → `bob` / `gizli67890`
-4. Mesajlasin, "Sifreli icerigi goster" kutusunu ac.
-
-> ⚠️ **15 dakika bos kalirsa servis uyur.** Sonraki istekte ~30 saniye uyanir.
-> Demo'dan 1 dakika once URL'i acip "uyandirmis" ol.
+Build ~5 dakika surer (Docker multi-stage). Logs sekmesinde
+`[production] Kripto site http://localhost:10000 adresinde calisiyor`
+satirini gorunce hazirdir.
 
 ---
 
-## 2. Glitch.com (Mirror / yedek)
+## 3. Render Free Tier — bilmen gereken davranislar
 
-Render uyursa veya inerse Glitch yedegi devreye girer. Veri ayri kalir
-(her host kendi kullanici listesi tutar).
+| Durum | Etkisi |
+|---|---|
+| **15 dk inaktif** | Servis uyur (spin-down) |
+| **Uyuduktan sonra ilk istek** | ~30-50 sn cold start (container baslar) |
+| **Kalici disk YOK** | Her restart'ta SQLite DB resetlenir, kullanicilar silinir |
+| **750 saat/ay** | Tek servis icin pratik olarak limitsiz |
+| **90 gun hicbir trafik gelmezse** | Render servisi suspend edebilir |
+| **HTTPS** | Otomatik, ucretsiz, yenilenmesi Render'da |
+| **Bandwidth** | 100 GB/ay (okul projesi icin asilamaz) |
 
-### Adim 1 — Hesap
-1. https://glitch.com → **Sign in** → GitHub ile gir.
+### Onemli: DB her uyandirmada bostur
 
-### Adim 2 — Import
-1. Sag ust **New project** → **Import from GitHub**
-2. URL: `https://github.com/reverx99/kripto-site`
-3. **OK**. Glitch kodu cekip kuracak.
-
-> Branch sorunu: Glitch genelde default branch'i ceker. GitHub'da default
-> branch'i `claude/focused-bardeen-8mpQA` yap (Settings → Branches → default
-> branch dropdown), VEYA Glitch import sonrasi `.git` config'inden duzelt.
-> En kolayi: yeni main branch olustur (asagiya bak).
-
-### Adim 3 — Calistir
-Glitch otomatik `npm install` + `npm start` yapar. Birkac saniye sonra
-sag ust **Preview** → **Open in a new window**.
-
-URL'in: `https://<proje-adi>.glitch.me`
-
-> Glitch SQLite'i diskte tutar, veri kalici. Ama 5 dk inaktif sonra uyur,
-> uyaninca veri olduguyla durur.
+Free tier'da `/data` kalici degil. Yani uzun bir aradan sonra ziyarette
+alice/bob yeniden kayit edilmeli. Bu *demo icin sorun degil* — hocaya
+canli kayit gosterirsin, "bakin sunucuda hicbir kullanici yokken
+basliyoruz" diyebilirsin.
 
 ---
 
-## 3. (Onerilen) main branch olustur
+## 4. Demo gunu icin checklist
 
-Render ve Glitch hayatini kolaylastirmak icin GitHub'da `main` branch
-olusturup default yap:
+### Demo'dan 5 dakika once
+1. `https://kripto-site.onrender.com/` adresini ac.
+2. Cold start uyumussa ~30 saniye bekle, ana sayfa acilana kadar.
+3. **Normal pencere** → Kayit ol: `alice` / `gizli12345`
+4. **Gizli pencere** → Kayit ol: `bob` / `gizli67890`
+5. Alice'ten bob'a "test" yaz, geldigini gor.
 
-```bash
-# Lokal'de zaten yoksa, su anki branch'i main'e cevirelim
-git push origin claude/focused-bardeen-8mpQA:main
-```
+### Hocaya gosterirken
+- Iki pencereyi yan yana ac (Alice solda, Bob sagda).
+- Alice mesaj yazar → Bob ekraninda **dakikalar icinde** otomatik
+  gorunur (polling 2 sn'de bir).
+- Bob mesajda **yesil ✅ imza** isaretini goster — "alice'ten geldigi
+  kanitlanmis" demek.
+- **"Sifreli icerigi goster"** kutusunu acin → ayni mesajin
+  ciphertext + imza hali gozukur. Hocaya bunu vurgula:
+  > "Sunucuya bu Base64 cop gidiyor. Veritabaninda da bu var. Acik
+  > metin sunucunun hicbir yerinde yok."
 
-Veya GitHub web UI:
-1. Repo sayfasinda branch dropdown → **View all branches**
-2. **New branch** → from `claude/focused-bardeen-8mpQA` → name `main` → **Create**
-3. Repo **Settings** → **General** → **Default branch** → kalemden `main`'e cevir.
-
----
-
-## 4. Hocaya teslim paketi
-
-1. **Asil site URL**: `https://kripto-site-XXXX.onrender.com`
-2. **Yedek (mirror) URL**: `https://<proje>.glitch.me`
-3. **GitHub repo**: `https://github.com/reverx99/kripto-site`
-4. **Dokumantasyon**: `DOKUMANTASYON.md` (PDF'e cevirip de yollayabilirsin)
-
-### Demo sirasinda hocaya goster
-
-- ✅ Iki tarayici/cihazdan mesajlasin.
-- ✅ "Sifreli icerigi goster" kutusunu acip ciphertext'i goster.
-- ✅ Imza dogrulama isaretini (✅) goster.
-- ✅ Render'in admin panelinden DB'ye bakip (veya `sqlite3` ile lokal'de
-  acip) sunucuda **sadece sifreli verinin durdugunu** kanitla.
-- ✅ "Mirror site"e gec, ayni demo'yu orada da yap.
+### Hoca soracak olursa
+- "Sifre nereye kayitli?" → Sunucuda bcrypt hash (cost 12).
+  `/api/login` route'unda goruluyor.
+- "Ozel anahtar nerede?" → Tarayicida, sifreyle sarili halde sunucuda
+  da var (PBKDF2 ile turetilen anahtarla AES-GCM ile). Sifresiz
+  acilamaz.
+- "Sunucu mesaji okuyabilir mi?" → Hayir. Sifreleme ve cozme istemci
+  tarafinda. Sunucu sadece sifreli paket gorur.
+- "TLS var mi?" → Evet, Render Let's Encrypt sertifikasi yonetiyor.
+  Production'da HTTP istekleri HTTPS'e yonlendiriliyor.
 
 ---
 
-## 5. Sorun cikarsa
+## 5. Hocaya teslim paketi
 
-### "Application failed to respond"
-- Render Logs sekmesine bak. Genelde port hatasi olur — Render `PORT`
-  environment variable'ini kendi atar, biz `process.env.PORT`'u dinliyoruz,
-  sorun olmamali. Hata buraya bak.
+Hocaya su uc seyi yolla:
 
-### "Cannot connect to database"
-- SQLite dosyasi DATA_DIR'a yazilamiyorsa. Render free tier'da
-  `/opt/render/project/src` yazilabilir, default ayar bu sekilde calisir.
+1. **Canli site**: https://kripto-site.onrender.com/
+2. **GitHub repo**: https://github.com/reverx99/kripto-site
+3. **Dokumantasyon**: `DOKUMANTASYON.md` (PDF'e cevirip de yollayabilirsin)
+
+### Mail/teslim metni ornegi
+
+> Sayin Hocam,
+>
+> Kripto dersi projesi olarak uctan uca sifreli mesajlasma sitemi
+> hazirladim.
+>
+> - **Canli URL**: https://kripto-site.onrender.com/
+> - **Kaynak kod**: https://github.com/reverx99/kripto-site
+> - **Dokumantasyon**: Ekteki DOKUMANTASYON.pdf
+>
+> **Not**: Site ucretsiz Render.com hosting'inde calisiyor. 15 dakika
+> inaktif kalirsa otomatik uykuya geciyor. Ilk acilis ~30 saniye
+> surebilir, lutfen bekleyiniz.
+>
+> Demo icin iki tarayici/pencere acmaniz yeterli. "Kayit ol" ile iki
+> kullanici olusturup birbirinize mesaj atabilirsiniz.
+>
+> Saygilarimla.
+
+---
+
+## 6. Sorun cikarsa
+
+### Site 5 dakikadir acilmiyor
+- Render dashboard → kripto-site servisi → **Logs** sekmesine bak.
+- En sik: container "Failed to bind port" — PORT environment variable
+  ile ilgili. Render kendi atar (10000), server.js `process.env.PORT`'u
+  okuyor, sorun olmamali. Hata loglarini paylas.
+
+### Build "exit code 137"
+- Free tier RAM yetersizligi. Tekrar dene, build cache devreye girer.
 
 ### "Anahtarlar uretiliyor..." cok uzun
-- PBKDF2 310k iterasyon eski bilgisayarlarda 1-2 saniye surer. Normal.
+- PBKDF2 310.000 iterasyon — eski cihazlarda 1-2 saniye normal.
+  Tarayici donmuyorsa bekle.
 
-### Glitch import hatasi
-- Branch sorunu ihtimali yuksek. main branch olusturup oradan import et.
+### Servisi tamamen kapatmak istersen
+- Dashboard → kripto-site → Settings → en alt → **Delete Web Service**.
+- URL serbest kalir, GitHub repo dokunulmaz.

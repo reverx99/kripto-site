@@ -291,17 +291,24 @@ Ozel anahtarlarin sarili (anlamsiz bayt) durdugunu goster.
 
 ## 7. Production deployment
 
-### 7.1 Render.com (en kolay, ucretsiz, kredi karti gerekmez)
+### 7.1 Render.com (kullanilan host)
 
-1. Repoyu GitHub'a push et.
-2. https://render.com → kayit ol (GitHub ile).
-3. **New +** → **Web Service** → repoyu sec.
-4. Render `render.yaml`'i otomatik bulur. **Apply** de.
-5. Birkac dakika sonra `https://kripto-site-xxxx.onrender.com` calisir.
+Bu projenin canli surumu Render.com ucretsiz tier'da yayinlandi.
+
+- **Canli URL**: https://kripto-site.onrender.com/
+- **Region**: Frankfurt (EU Central)
+- **Runtime**: Docker (Dockerfile multi-stage build)
+- **Otomatik deploy**: `main`'e push edildiginde Render kendiliginden yeniden build alir.
+
+Sifirdan kurmak icin: GitHub ile Render hesabi ac → **New + Web Service**
+→ `reverx99/kripto-site` repo'sunu sec → Branch `main`, Language Docker,
+Instance Type Free, NODE_ENV=production → Deploy. Detayli adim adim
+talimat icin proje koklerindeki `DEPLOY.md` dosyasina bak.
 
 > ⚠️ Render free tier'da kalici disk yok. 15 dakika kullanilmazsa servis uyur,
-> uyandiginda SQLite dosyasi sifirlanabilir. Hocaya demo sirasinda yeni
-> hesaplar acip canli mesajlasarak gostermek yeterli.
+> uyandiginda SQLite dosyasi sifirlanir. Demo sirasinda yeni hesaplar acip
+> canli mesajlasarak gostermek bu kisitlamayi avantaja cevirir — hocaya
+> sunucuda hicbir on-veri olmadigi sifir noktasindan baslandigi gosterilir.
 
 ### 7.2 Fly.io (kalici veri, biraz daha karmasik)
 
@@ -328,28 +335,22 @@ docker run -d \
 
 HTTPS icin onune **Caddy** veya **nginx + Let's Encrypt** koy.
 
-### 7.4 Mirror (yedek deploy)
+### 7.4 Yedek strateji
 
-"Mirror" iki anlama gelebilir:
+Bu proje icin tek bir canli URL (Render) yeterli goruldu. Demo gunu icin
+yedek plani:
 
-**A) Repo yedegi (git mirror):**
-```bash
-# GitHub repo'sunu GitLab'a aynalamak
-git clone --mirror https://github.com/USER/kripto-site.git
-cd kripto-site.git
-git remote set-url --push origin https://gitlab.com/USER/kripto-site.git
-git push --mirror
-```
+1. **Demo'dan ~3 dakika once** Render URL'ini ac → cold start uyumussa
+   ~30 saniye bekle, ana sayfa acilana kadar emin ol.
+2. **Lokal yedek**: Sunum yapacagin laptop'a repo'yu klonla, `npm install`
+   ve `npm start` ile lokal de calisir halde tut. Render demo sirasinda
+   olur de tamamen dusarse `http://localhost:3000` ile devam edilebilir.
+3. **GitHub repo** zaten kalici bir yedek (kaynak kod kaybolmaz).
 
-**B) Ikinci host'a yedek deploy (showroom yedegi):**
-- Primary: Render.com → `https://kripto-site.onrender.com`
-- Mirror: Fly.io veya Glitch → `https://kripto-site.fly.dev`
-
-Iki host birbirinden bagimsiz. **Veritabanlari ayri** (her ikisinin kendi
-kullanici listesi vardir). Demo sirasinda biri inerse digerine gec.
-
-> Onemli: gercek bir uygulamada veritabanini senkron tutmak gerekir ama bu
-> okul projesinde gereksiz.
+> Not: Glitch.com 2025'te kapatildi, "mirror deploy" icin onceden tavsiye
+> edilen alternatif artik mevcut degil. Free tier'da Node.js destekleyen
+> ve kredi karti istemeyen secenekler azaldi; tek host + lokal yedek bu
+> seviye proje icin yeterli.
 
 ## 8. Kod akisinin ozeti
 

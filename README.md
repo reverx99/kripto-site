@@ -2,6 +2,11 @@
 
 Uctan uca sifreli (E2EE) iki kisilik mesajlasma sitesi — okul projesi.
 
+**Canli surum**: https://kripto-site.onrender.com/
+
+> Render.com ucretsiz tier'da host ediliyor. 15 dk inaktif kalirsa uyur,
+> ilk acilis ~30 saniye surebilir.
+
 ## Ozellikler
 
 - **Hibrit sifreleme**: RSA-OAEP-2048 + AES-GCM-256 (her mesaj icin yeni AES anahtari)
